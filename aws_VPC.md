@@ -1,0 +1,179 @@
+# AWS VPC Setup — Step-by-Step
+
+Goal: Create a custom VPC with public and private subnets, an Internet Gateway, NAT Gateway, route tables, and test EC2 instances.
+
+![alt text](Aws_VPC.jpg)
+
+## Prerequisites
+
+- AWS account with permissions for VPC, EC2, Elastic IP, and NAT Gateway
+- Familiarity with CIDR notation and AWS networking
+- EC2 key pair for SSH access
+
+!![alt text](Aws_VPC2.png)
+
+## Overview
+
+- VPC CIDR: `10.17.0.0/24` (example)
+- Public subnets: internet-facing (connected to IGW)
+- Private subnets: no direct inbound internet, outbound via NAT
+
+---
+
+## Step 1: Create a Custom VPC
+
+1. Sign in to the AWS Management Console and open the VPC Dashboard.
+2. Click **Create VPC**.
+3. Configure:
+   - Resources to create: `VPC only` (or `VPC and more` if you want AWS to auto-create subnets)
+   - Name tag: `mydevops-vpc` (or a name you prefer)
+   - IPv4 CIDR block: `10.17.0.0/24`
+4. Click **Create VPC**.
+
+Tip: Use /24 for small labs; use /16 for larger networks.
+
+## Step 2: Create Subnets
+Subnets segment the VPC for public-facing and internal resources.
+
+Create Public Subnets
+
+1. In the VPC Dashboard, go to **Subnets** → **Create subnet**.
+2. Configure the first public subnet:
+   - VPC ID: `mydevops-vpc`
+   - Subnet name: `public-subnet-1`
+   - Availability Zone: `ap-south-1a`
+   - IPv4 CIDR block: `10.17.1.0/26` (64 IPs)
+3. Click **Create subnet**.
+4. Repeat for a second public subnet:
+   - Name: `public-subnet-2`
+   - AZ: `ap-south-1b`
+   - CIDR: `10.17.0.64/26`
+
+Create Private Subnets
+
+1. Click **Create subnet** again.
+2. Configure the first private subnet:
+   - VPC ID: `mydevops-vpc`
+   - Subnet name: `private-subnet-1`
+   - Availability Zone: `ap-south-1c`
+   - CIDR: `10.17.0.128/26`
+3. Click **Create subnet**.
+4. Repeat for a second private subnet:
+   - Name: `private-subnet-2`
+   - AZ: `ap-south-1a` (or another AZ)
+   - CIDR: `10.17.0.192/26`
+
+Tip: Spread subnets across Availability Zones for high availability. Ensure CIDRs fit inside the VPC and do not overlap.
+
+## Step 3: Create Route Tables
+
+Create Public Route Table
+
+1. In the VPC console go to **Route Tables** → **Create route table**.
+2. Configure:
+   - Name: `public-route-table`
+   - VPC: `mydevops-vpc`
+3. Click **Create**.
+4. Select the route table, open **Subnet associations**, click **Edit subnet associations**, and associate `public-subnet-1` and `public-subnet-2`.
+5. Save associations.
+
+Create Private Route Table
+
+1. Click **Create route table**.
+2. Configure:
+   - Name: `private-route-table`
+   - VPC: `mydevops-vpc`
+3. Click **Create**.
+4. Edit subnet associations and associate `private-subnet-1` and `private-subnet-2`.
+5. Save associations.
+
+## Step 4: Create and Attach an Internet Gateway (IGW)
+
+1. Go to **Internet Gateways** → **Create internet gateway**.
+2. Name tag: `mydevops-igw`.
+3. Click **Create internet gateway**.
+4. Select the new IGW, choose **Actions** → **Attach to VPC**, select `mydevops-vpc`, and attach.
+
+## Step 5: Configure Routes for Internet Access
+
+1. Open **Route Tables**, select `public-route-table`.
+2. Go to the **Routes** tab and click **Edit routes**.
+3. Add a route:
+   - Destination: `0.0.0.0/0`
+   - Target: Internet Gateway → select `mydevops-igw`
+4. Save changes.
+
+Note: Do NOT add this 0.0.0.0/0 → IGW route to the private route table. Private subnets should not have direct inbound internet access.
+
+## Step 6: Launch EC2 Instances for Testing
+
+Launch in Public Subnet
+
+1. Open the EC2 Dashboard → **Launch Instance**.
+2. Configure:
+   - Name: `public-instance-1`
+   - AMI: Amazon Linux 2 (free tier eligible)
+   - Instance type: `t2.micro`
+   - Key pair: select an existing key pair
+   - Network settings:
+     - VPC: `mydevops-vpc`
+     - Subnet: `public-subnet-1`
+     - Auto-assign Public IP: **Enable**
+   - Security group: create `public-sg` allowing SSH (port 22) from your IP (or 0.0.0.0/0 for quick demos)
+3. Launch the instance.
+
+Launch in Private Subnet
+
+1. Repeat the EC2 launch steps:
+   - Name: `private-instance-1`
+   - Subnet: `private-subnet-1`
+   - Auto-assign Public IP: **Disable**
+   - Security group: allow SSH from within the VPC or from a bastion host only
+2. Launch the instance.
+
+## Step 7: Test Connectivity
+
+Public Instance
+
+- SSH from your workstation: `ssh -i your-key.pem ec2-user@<public-ip>` (AMI user may vary)
+- From the public instance: `ping www.google.com` — should succeed (internet via IGW).
+
+Private Instance
+
+- Access via jump host: SSH from the public instance to the private instance using its private IP.
+- From the private instance: `ping www.google.com` — will fail unless you configure a NAT Gateway for outbound access.
+
+## Advanced Setup: NAT Gateway (for private outbound internet)
+
+1. In the VPC console go to **NAT Gateways** → **Create NAT gateway** Name tag: `mydevops-VPC-NG`
+2. Availability mode → Zonal 
+3. Choose a **public subnet** for the NAT Gateway and allocate or choose an Elastic IP.
+4. Create the NAT Gateway (may take a few minutes).
+5. Edit `private-route-table` routes and add:
+   - Destination: `0.0.0.0/0`
+   - Target: NAT Gateway (select the NAT Gateway you created)
+
+Note: NAT Gateways incur charges. For cost-sensitive labs, a NAT instance is an alternative but requires maintenance.
+
+## Cleanup (to avoid charges)
+
+1. Terminate EC2 instances.
+2. Delete the NAT Gateway (wait for it to fully delete).
+3. Detach and delete the Internet Gateway.
+4. Remove route table associations and delete custom route tables.
+5. Delete subnets.
+6. Delete the VPC.
+
+## Tips & Best Practices
+
+- Spread subnets across AZs for high availability.
+- Keep naming consistent and descriptive.
+- Restrict SSH to known IPs or use Session Manager/bastion hosts.
+- Use NAT Gateways in production and monitor costs.
+
+## References
+
+- AWS VPC User Guide: https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html
+- NAT Gateway Docs: https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html
+
+Happy Learning & Happy DevOps! 🚀
